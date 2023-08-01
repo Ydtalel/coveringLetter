@@ -8,10 +8,31 @@
     <p><strong>Имя пользователя:</strong> {{ user.username }}</p>
     <p><strong>E-mail:</strong> {{ user.email }}</p>
     <!-- Отображаем данные из CoverLetter, если они есть -->
-    {% if cover_letter %}
-    <h3>Данные из сопроводительного письма:</h3>
-    <p>{{ cover_letter.text }}</p>
-    <p><strong>Обработанный текст:</strong> {{ cover_letter.processed_text }}</p>
+    {% if cover_letters %}
+    {% for cover_letter in cover_letters %}
+    <div class="card mb-4">
+        <div class="card-body">
+            <h3 class="card-title">Данные из сопроводительного письма:</h3>
+            <p class="card-text">{{ cover_letter.text }}</p>
+            <p class="card-text"><strong>Обработанные варианты:</strong></p>
+            {% for processed_letter in cover_letter.processed_letters.all %}
+            <div class="card">
+                <div class="card-header">
+                    Вариант {{ processed_letter.id }} <!-- Используем идентификатор варианта как название -->
+                </div>
+                <div class="card-body">
+                    <p class="card-text">{{ processed_letter.processed_text }}</p>
+                    <a href="#" class="btn btn-success">Использовать</a>
+                    <a href="#" class="btn btn-secondary">Редактировать</a>
+                    <a href="#" class="btn btn-danger">Удалить</a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% empty %}
+    <p>У вас нет сопроводительных писем.</p>
+    {% endfor %}
     {% else %}
     <p>У вас нет сопроводительного письма.</p>
     {% endif %}
