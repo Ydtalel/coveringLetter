@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block title %} Профиль пользователя | {{ block.super }} {% endblock title %}
+{% block content %}
+<div class="container">
+    <h1>Профиль пользователя</h1>
+    <hr>
+    {% if user.is_authenticated %}
+    <p><strong>Имя пользователя:</strong> {{ user.username }}</p>
+    <p><strong>E-mail:</strong> {{ user.email }}</p>
+    <!-- Отображаем данные из CoverLetter, если они есть -->
+    {% if cover_letter %}
+    <h3>Данные из сопроводительного письма:</h3>
+    <p>{{ cover_letter.text }}</p>
+    <p><strong>Обработанный текст:</strong> {{ cover_letter.processed_text }}</p>
+    {% else %}
+    <p>У вас нет сопроводительного письма.</p>
+    {% endif %}
+    <hr>
+    <!-- Ссылка "Сгенерировать сопроводительное письмо" -->
+    <a href="{% url 'generate_cover_letter' %}" class="btn btn-outline-dark">Сгенерировать сопроводительное письмо</a>
+    {% else %}
+    <p>Вы не авторизованы. <a href="{% url 'login' %}" class="btn btn-outline-dark">Войдите</a> или <a
+            href="{% url 'register' %}" class="btn btn-secondary">Зарегистрируйтесь</a>.</p>
+    {% endif %}
+</div>
+{% endblock content %}
