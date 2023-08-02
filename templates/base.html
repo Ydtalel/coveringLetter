@@ -11,6 +11,12 @@
 
 </head>
 <body>
+{% if error_message %}
+<div class="error-message">
+    {{ error_message }}
+</div>
+{% endif %}
+
 {% block content %}
 
 {% endblock content %}

@@ -1,58 +1,48 @@
 from django.contrib.auth import login, logout
-from django.shortcuts import get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render, redirect
 from .forms import RegisterForm, UserLogin, CoverLetterForm
+
+from rest_framework import viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
 from .models import CoverLetter, ProcessedCoverLetter
-import os
-from dotenv import load_dotenv
-import openai
-import json
+from .serializers import CoverLetterSerializer, ProcessedCoverLetterSerializer
+from OpenAI import process_text, GPTProcessingError, ERROR_MESSAGES
+from django.contrib import messages
 import logging
 
-load_dotenv()
-
-# Здесь нужно указать ваш ключ API GPT-3.5 Turbo от OpenAI
-openai.api_key = os.getenv("OPENAI_API_KEY")
-logging.basicConfig(filename='gpt3_processing_errors.log', level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+import requests.exceptions
+from urllib3.exceptions import TimeoutError
 
 
-def process_text(text):
-    # Задайте параметры для вызова API GPT-3.5 Turbo
-    prompt = f"Пожалуйста, улучшите следующий текст: \"{text}\". Улучшите его несколько раз и предоставьте варианты." \
-             f" Текст должен быть составлен на русском языке."
+class CoverLetterViewSet(viewsets.ModelViewSet):
+    queryset = CoverLetter.objects.all()
+    serializer_class = CoverLetterSerializer
 
-    n = 5  # Количество требуемых улучшенных вариантов
+    @action(detail=True, methods=['get'])
+    def processed_letters(self, request, pk=None):
+        cover_letter = self.get_object()
+        processed_letters = cover_letter.processed_letters.all()
+        serializer = ProcessedCoverLetterSerializer(processed_letters, many=True)
+        return Response(serializer.data)
 
-    try:
-        # Вызовите API GPT-3.5 Turbo для обработки текста
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": text + "\nКонец"}  # Добавляем разделитель "Конец"
-            ],
-            n=n,
-            max_tokens=400,
-            stop="Конец",  # Используем "Конец" как стоп-слово для разделения ответов
-            temperature=0.7,
-        )
+    def perform_create(self, serializer):
+        serializer.save()
 
-        # Извлекаем улучшенные варианты текста из ответа API
-        improved_variants_list = [message["message"]["content"] for message in response["choices"]]
+    def perform_update(self, serializer):
+        serializer.save()
 
-        # Удаляем разделитель "Конец" из каждого улучшенного варианта
-        improved_variants_list = [variant.replace("Конец", "").strip() for variant in improved_variants_list]
 
-        # Ограничиваем каждый улучшенный вариант до 300 символов
-        improved_variants_list = [variant for variant in improved_variants_list]
+class ProcessedCoverLetterViewSet(viewsets.ModelViewSet):
+    queryset = ProcessedCoverLetter.objects.all()
+    serializer_class = ProcessedCoverLetterSerializer
 
-        return improved_variants_list
+    def perform_create(self, serializer):
+        serializer.save()
 
-    except Exception as e:
-        # Если произошла ошибка, записываем ее в лог
-        logging.error(f"Error processing text: {text}\nError details: {e}")
-        return []
+    def perform_update(self, serializer):
+        serializer.save()
 
 
 def user_profile(request):
@@ -68,7 +58,6 @@ def user_profile(request):
     return render(request, 'userProfile/profile.html', context)
 
 
-
 @login_required
 def generate_cover_letter(request):
     if request.method == 'POST':
@@ -76,21 +65,50 @@ def generate_cover_letter(request):
         if form.is_valid():
             text = form.cleaned_data['text']
 
-            # Сохранение текста в поле 'text' модели 'CoverLetter'
-            cover_letter = CoverLetter.objects.create(user=request.user, text=text)
+            try:
+                # Сохранение текста в поле 'text' модели 'CoverLetter'
+                cover_letter = form.save(commit=False)  # Сохранение формы без фактической записи в базу данных
+                cover_letter.user = request.user
+                cover_letter.save()
 
-            # Отправка текста на обработку с помощью GPT-3.5 Turbo
-            response = process_text(text)
+                response = process_text(text)
 
-            # Сохранение полученных вариантов ответа в базе данных
-            for variant in response:
-                ProcessedCoverLetter.objects.create(cover_letter=cover_letter, processed_text=variant)
+                # Проверка на наличие ошибки в ответе
+                if 'error' in response:
+                    error_code = response['error']['code']
 
-            # Сохранение ответа от GPT-3.5 Turbo в файл response.json
-            with open('response.json', 'w', encoding='utf-8') as file:
-                json.dump(response, file, ensure_ascii=False, indent=4)
+                    # Проверка, есть ли соответствующее сообщение об ошибке в словаре
+                    if error_code in ERROR_MESSAGES:
+                        error_message = ERROR_MESSAGES[error_code]
+                    else:
+                        error_message = "Произошла ошибка при обработке текста. Пожалуйста, попробуйте еще раз позже."
 
-            return redirect('profile')
+                    messages.error(request, error_message)
+
+
+
+                # Сохранение полученных вариантов ответа в базе данных
+                for variant in response:
+                    ProcessedCoverLetter.objects.create(cover_letter=cover_letter, processed_text=variant)
+
+            except GPTProcessingError as e:
+                # Обработка ошибок, возникающих при обработке текста через GPT-3.5 Turbo
+                error_message = str(e)
+                messages.error(request, error_message)
+
+            except (requests.exceptions.RequestException, TimeoutError) as e:
+                # Обработка ошибок соединения или тайм-аута
+                error_message = "Ошибка соединения или тайм-аута при обработке текста. Пожалуйста, попробуйте " \
+                                "еще раз позже."
+                logging.error(f"Connection or Timeout Error processing text: {text}\nError details: {e}")
+                messages.error(request, error_message)
+
+            except Exception as e:
+                # Обработка других неожиданных ошибок
+                error_message = "An unexpected error occurred. Please try again later."
+                logging.error(f"Unexpected error processing text: {text}\nError details: {e}")
+                messages.error(request, error_message)
+            return redirect('profile')  # Перенаправление пользователя на страницу профиля
     else:
         form = CoverLetterForm()
 
